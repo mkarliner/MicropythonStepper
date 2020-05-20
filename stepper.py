@@ -2,6 +2,8 @@ from machine import Pin
 import time
 import uasyncio as asyncio
 import network
+import binascii
+import asyn
 
 # (c) IDWizard 2017
 # MIT License.
@@ -10,9 +12,13 @@ async def connect():
     station = network.WLAN(network.STA_IF)
     station.active(True)
     station.connect("mihome", "electr1c")
-    station.isconnected()
-    station.ifconfig()
-    #time.sleep(15)
+    while(station.isconnected() != True):
+        await asyncio.sleep(1)
+    print(station.ifconfig())
+    mac = station.config('mac')
+    last = binascii.hexlify(mac)[-4:].decode("ascii")
+    print("ping me on PYBD{}.local".format(last))
+    
 
 
 
@@ -73,6 +79,7 @@ class Stepper():
         self.pin2 = Pin(pinno2,Pin.OUT)
         self.pin3 = Pin(pinno3,Pin.OUT)
         self.pin4 = Pin(pinno4,Pin.OUT)
+        self.position = 0
  
         self.delay = int(1000/speed)  # Recommend 10+ for FULL_STEP, 1 is OK for HALF_STEP
                                  # speed is 1-1000 == 1000 - 1 millisecond delay
@@ -89,6 +96,7 @@ class Stepper():
                 self.pin3.value(bit[2]) 
                 self.pin4.value(bit[3]) 
                 await asyncio.sleep_ms(self.delay)
+                self.position += direction
         self.reset()
         
     async def move(self, direction=1, speed=DEFAULT_SPEED):
@@ -102,7 +110,7 @@ class Stepper():
         self.moving = False
             
         
-    def setSpeed(speed):
+    def setSpeed(self,speed):
         self.delay = 1000/speed
         
     def reset(self):
@@ -110,9 +118,21 @@ class Stepper():
         self.pin1.value(0) 
         self.pin2.value(0) 
         self.pin3.value(0) 
-        self.pin4.value(0) 
+        self.pin4.value(0)
+        
+    def position(self):
+        return self.position
+        
+class Limits():
+    def __init__(self, minLimitPinNo, maxLimitPinNo):
+        pass
+#         self.minLimitPin = Pin(minLimitPinNo,Pin.IN)
+#         self.maxLimitPin = Pin(maxLimitPinNo,Pin.IN)
+
 
 if __name__ == '__main__':
+    
+    readOK = asyn.Event()
     
     async def hello():
         while(True):
@@ -128,36 +148,104 @@ if __name__ == '__main__':
             await asyncio.sleep(10)
             print('bounce stop')
             s1.stop()
-            await asyncio.sleep(10)
+            await asyncio.sleep(1)
             print('bounce backwards')
             asyncio.create_task(s1.move(-1, 300))
             await asyncio.sleep(10)
             print('bounce stop')
             s1.stop()
-            await asyncio.sleep(10)
+            await asyncio.sleep(1)
             
+    readr = None
+    writr = None
+    stepper = None
+    
     async def servercb(reader, writer):
+        global stepper
+        global readr
+        global writr
+        global loop
+        readr = reader
+        writr = writer
+        loop.create_task(sendMessage(writer))
+        loop.create_task(rxMessage(reader))
+        print(writer)
+        loop.create_task(sendPosition(s1, writer, reader))
         print('Connection made')
         writer.write('Hello telnet'.encode())
         await writer.drain()
+
+    async def sendMessage(writer):
+        count = 0
+        while True:
+#             writer.write(('Hello telnet %d' % count).encode())
+#             await writer.drain()
+            await asyncio.sleep(10)
+            count += 1
+            
+    
+    async def rxMessage(reader):
+        global readOK
+        while True:
+            buf = await reader.readline()
+            if(len(buf) == 0):
+                return
+            msg = buf.rstrip().decode('utf-8')
+            print(msg)
+            if(msg == 'OK'):
+                readOK.set()
+            elif(msg == 'moveLeft'):
+                s1.stop()
+                asyncio.create_task(s1.move(1))
+            elif(msg == 'moveRight'):
+                s1.stop()
+                asyncio.create_task(s1.move(-1))
+            elif(msg == 'stop'):
+                s1.stop()
+            else:
+                print('Bad cmd: %s' % msg)
+            
+                
+                    
+            
+    async def sendPosition(stepper, writer, reader):
+        global readOK
+        oldPosition = 0
+        while True:
+            newPosition = stepper.position
+            if(newPosition != oldPosition):  
+                writer.write('position:%d:' % stepper.position)
+                print('position: %d\n' % stepper.position)
+                await asyncio.sleep_ms(100)
+                await writer.drain()
+                await readOK
+                readOK.clear()
+                print("LEN: %d" % len(writer.out_buf))
+                oldPosition = newPosition
+            else:
+                await asyncio.sleep_ms(100)
+            
             
 
     loop = asyncio.get_event_loop()
-    s1 = Stepper(HALF_STEP, 12, 14, 27, 26, speed=300)    
+    s1 = Stepper(HALF_STEP, 12, 14, 27, 26, speed=300)
+    s1.limits = Limits(25, 26)
     #s2 = Stepper(HALF_STEP, microbit.pin6, microbit.pin5, microbit.pin4, microbit.pin3, delay=5)   
     #s1.step(FULL_ROTATION)
     #s2.step(FULL_ROTATION)
     loop = asyncio.get_event_loop()
     asyncio.run(connect())
     
-    server = asyncio.start_server(servercb, '0.0.0.0', 23, backlog=10)
+    server = asyncio.start_server(servercb, '0.0.0.0', 2323, backlog=10)
     
     #runner = Driver()
     #loop.create_task(runner.run([Command(s1, FULL_ROTATION, 1)]))
     #loop.create_task(s1.move(1, 300))
+
+            
     loop.create_task(server)
-    loop.create_task(hello())
-    loop.create_task(bounce())
+#     loop.create_task(hello())
+#     loop.create_task(bounce())
     loop.run_forever()
     loop.close()
 #     asyncio.run(runner.run([Command(s1, FULL_ROTATION, 1)]))
