@@ -90,6 +90,12 @@ class Stepper():
     async def step(self, count, direction=1):
         """Rotate count steps. direction = -1 means backwards"""
         for x in range(count):
+            if(direction == 1 and self.limits.minLimit() == False):
+                print("MINLIMIT")
+                return False
+            if(direction == -1 and self.limits.maxLimit() == False):
+                print("MAXLIMIT")
+                return False
             for bit in self.mode[::direction]:
                 self.pin1.value(bit[0]) 
                 self.pin2.value(bit[1]) 
@@ -98,6 +104,7 @@ class Stepper():
                 await asyncio.sleep_ms(self.delay)
                 self.position += direction
         self.reset()
+        return True
         
     async def move(self, direction=1, speed=DEFAULT_SPEED):
         print('moving %d' % direction)
@@ -113,6 +120,8 @@ class Stepper():
     def setSpeed(self,speed):
         self.delay = 1000/speed
         
+ 
+        
     def reset(self):
         # Reset to 0, no holding, these are geared, you can't move them
         self.pin1.value(0) 
@@ -125,9 +134,16 @@ class Stepper():
         
 class Limits():
     def __init__(self, minLimitPinNo, maxLimitPinNo):
-        pass
+        self.minLimitPin = Pin(minLimitPinNo,Pin.IN)
+        self.maxLimitPin = Pin(maxLimitPinNo,Pin.IN)
 #         self.minLimitPin = Pin(minLimitPinNo,Pin.IN)
-#         self.maxLimitPin = Pin(maxLimitPinNo,Pin.IN)
+#    N)     self.maxLimitPin = Pin(maxLimitPinNo,Pin.IN)
+
+    def minLimit(self):
+        return self.minLimitPin.value()
+    
+    def maxLimit(self):
+        return self.maxLimitPin.value()
 
 
 if __name__ == '__main__':
@@ -210,26 +226,30 @@ if __name__ == '__main__':
             
     async def sendPosition(stepper, writer, reader):
         global readOK
+        global limits
         oldPosition = 0
         while True:
             newPosition = stepper.position
             if(newPosition != oldPosition):  
-                writer.write('position:%d:' % stepper.position)
+                writer.write('position:%d\n' % stepper.position)
                 print('position: %d\n' % stepper.position)
-                await asyncio.sleep_ms(100)
                 await writer.drain()
-                await readOK
-                readOK.clear()
+                await asyncio.sleep_ms(100)
+#                 await readOK
+#                 readOK.clear()
                 print("LEN: %d" % len(writer.out_buf))
                 oldPosition = newPosition
             else:
                 await asyncio.sleep_ms(100)
+                    
+                    
             
             
 
     loop = asyncio.get_event_loop()
     s1 = Stepper(HALF_STEP, 12, 14, 27, 26, speed=300)
-    s1.limits = Limits(25, 26)
+    s1.limits = Limits(25, 33)
+    
     #s2 = Stepper(HALF_STEP, microbit.pin6, microbit.pin5, microbit.pin4, microbit.pin3, delay=5)   
     #s1.step(FULL_ROTATION)
     #s2.step(FULL_ROTATION)
