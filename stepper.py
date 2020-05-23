@@ -102,7 +102,7 @@ class Stepper():
                 self.pin3.value(bit[2]) 
                 self.pin4.value(bit[3]) 
                 await asyncio.sleep_ms(self.delay)
-                self.position += direction
+                self.position -= direction
         self.reset()
         return True
         
@@ -110,7 +110,10 @@ class Stepper():
         print('moving %d' % direction)
         self.moving = True
         while(self.moving):
-            await self.step(1, direction)
+            if(await self.step(1, direction) == False):
+                self.moving = False
+                return False
+        return True
             
     def stop(self):
         print('Stopping')
@@ -120,7 +123,13 @@ class Stepper():
     def setSpeed(self,speed):
         self.delay = 1000/speed
         
- 
+    async def home(self):
+        print("Start home")
+        res = await self.move(1)
+        self.position = 0
+        print("homed")
+        return res
+        
         
     def reset(self):
         # Reset to 0, no holding, these are geared, you can't move them
@@ -143,7 +152,8 @@ class Limits():
         return self.minLimitPin.value()
     
     def maxLimit(self):
-        return self.maxLimitPin.value()
+        return True
+#         return self.maxLimitPin.value()
 
 
 if __name__ == '__main__':
@@ -183,24 +193,20 @@ if __name__ == '__main__':
         global loop
         readr = reader
         writr = writer
-        loop.create_task(sendMessage(writer))
-        loop.create_task(rxMessage(reader))
+#         loop.create_task(sendMessage(writer))
+        loop.create_task(rxMessage(reader, writer))
         print(writer)
         loop.create_task(sendPosition(s1, writer, reader))
         print('Connection made')
         writer.write('Hello telnet'.encode())
         await writer.drain()
 
-    async def sendMessage(writer):
-        count = 0
-        while True:
-#             writer.write(('Hello telnet %d' % count).encode())
-#             await writer.drain()
-            await asyncio.sleep(10)
-            count += 1
+    async def sendMessage(writer, msg):
+            writer.write((msg).encode())
+            await writer.drain()
             
     
-    async def rxMessage(reader):
+    async def rxMessage(reader, writer):
         global readOK
         while True:
             buf = await reader.readline()
@@ -212,12 +218,38 @@ if __name__ == '__main__':
                 readOK.set()
             elif(msg == 'moveLeft'):
                 s1.stop()
+                await asyncio.sleep_ms(100)
+                s1.delay = int(1000/300)
                 asyncio.create_task(s1.move(1))
+                asyncio.create_task(sendMessage(writer, 'status:< MOVING\n'))
             elif(msg == 'moveRight'):
                 s1.stop()
+                await asyncio.sleep_ms(100)
+                s1.delay = int(1000/300)
                 asyncio.create_task(s1.move(-1))
+                asyncio.create_task(sendMessage(writer, 'status:MOVING >\n'))
+            elif(msg == 'slowLeft'):
+                print('slowLeft')
+                s1.stop()
+                await asyncio.sleep_ms(100)
+                s1.delay = int(1000/30)
+                asyncio.create_task(s1.move(1))
+                asyncio.create_task(sendMessage(writer, 'status:< SLMOVING\n'))
+            elif(msg == 'slowRight'):
+                s1.stop()
+                await asyncio.sleep_ms(100)
+                s1.delay = int(1000/30)
+                asyncio.create_task(s1.move(-1))
+                asyncio.create_task(sendMessage(writer, 'status:< LMOVING\n'))
             elif(msg == 'stop'):
                 s1.stop()
+            elif(msg == 'home'):
+                print("Homeing")
+                res = await asyncio.create_task(s1.home())            
+                asyncio.create_task(sendMessage(writer, 'status:HOMED\n'))
+                    
+                
+                
             else:
                 print('Bad cmd: %s' % msg)
             
